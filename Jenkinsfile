@@ -1,35 +1,48 @@
 pipeline {
     agent any
+    
+    environment {
+        HEROKU_APP_NAME = "maruma-morandini"
+        AWS_REGION = "us-east-1"
+        S3_BUCKET_NAME = "hackademy-practice"
+        DOCKER_IMAGE_NAME = "hackademy-app"
+    }
+    
     stages {
-        stage('Clone code') {
+        stage("Clone repository") {
             steps {
                 checkout scm
             }
         }
-        stage('Build Docker image') {
-            steps {
-                sh 'docker build -t hackademy-app .'
-            }
-        }
-        stage('Push Docker image to S3') {
-            steps {
-                withAWS(region: 'us-east-1', credentials: 'aws-credentials') {
-                    s3Upload(bucket: 'hackademy-images', path: 'hackademy-app:latest', file: 'Dockerfile')
-                }
-            }
-        }
-        stage('Deploy to Heroku') {
+        
+        stage("Build and push Docker image") {
             when {
                 branch 'master'
             }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'heroku1', passwordVariable: 'HEROKU_API_KEY', usernameVariable: 'HEROKU_EMAIL')]) {
-                    sh 'heroku container:login'
-                    sh 'docker tag hackademy-app registry.heroku.com/hackademy-app/web'
-                    sh 'docker push registry.heroku.com/hackademy-app/web'
-                    sh 'heroku container:release web --app hackademy-app'
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', accessKeyVariable: 'AWS_ACCESS_KEY_ID', secretKeyVariable: 'AWS_SECRET_ACCESS_KEY']]) {
+                    sh "aws s3 cp s3://${S3_BUCKET_NAME}/${DOCKER_IMAGE_NAME} ./${DOCKER_IMAGE_NAME}"
+                    sh "docker load -i ./${DOCKER_IMAGE_NAME}"
+                    sh "docker tag ${DOCKER_IMAGE_NAME} registry.heroku.com/${HEROKU_APP_NAME}/web"
+                    sh "heroku container:login"
+                    sh "heroku container:push web -a ${HEROKU_APP_NAME}"
+                    sh "heroku container:release web -a ${HEROKU_APP_NAME}"
                 }
             }
         }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+    }
+    
+    triggers {
+        pollSCM('H/5 * * * *')
+    }
+    
+    options {
+        disableConcurrentBuilds()
     }
 }
